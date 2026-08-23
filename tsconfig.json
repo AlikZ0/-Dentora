@@ -1,0 +1,11 @@
+{
+  // Nuxt's generated config already includes src/, tests/ and the root
+  // config files, so we only layer strictness on top of it.
+  "extends": "./.nuxt/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["node", "vitest/globals"]
+  }
+}
