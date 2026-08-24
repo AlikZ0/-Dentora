@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useModalStack } from '~/composables/useModalStack'
 
 const props = withDefaults(
   defineProps<{
@@ -7,10 +8,19 @@ const props = withDefaults(
     title?: string
     /** Full-height sheet on phones; centred dialog on desktop. */
     sheet?: boolean
+    /** Allows Escape and the close button. */
     dismissible?: boolean
+    /**
+     * Whether tapping outside closes the dialog. Off for destructive
+     * confirmations: the dimmed area is large on a phone, and a stray tap
+     * there would silently abandon the action the user just started.
+     */
+    backdropDismiss?: boolean
   }>(),
-  { dismissible: true, sheet: true },
+  { dismissible: true, sheet: true, backdropDismiss: true },
 )
+
+const { isTop, zIndex, enter, leave } = useModalStack()
 
 const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
@@ -19,8 +29,14 @@ function requestClose(): void {
   if (props.dismissible) emit('close')
 }
 
+function onBackdropClick(): void {
+  if (props.backdropDismiss) requestClose()
+}
+
 function onKeydown(event: KeyboardEvent): void {
-  if (!props.open) return
+  // Only the dialog on top of the stack responds, so Escape closes the
+  // confirmation without also dismissing the sheet underneath it.
+  if (!props.open || !isTop.value) return
   if (event.key === 'Escape') {
     requestClose()
     return
@@ -46,27 +62,30 @@ watch(
   () => props.open,
   (open) => {
     if (typeof document === 'undefined') return
-    // Locking the body avoids the iOS "scroll the page behind the sheet" bug.
-    document.body.style.overflow = open ? 'hidden' : ''
+    // The stack owns the body scroll lock; see useModalStack.
     if (open) {
+      enter()
       requestAnimationFrame(() => {
         panel.value?.querySelector<HTMLElement>('[autofocus], input, button')?.focus()
       })
+    } else {
+      leave()
     }
   },
+  { immediate: true },
 )
 
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
-  document.body.style.overflow = ''
+  leave()
 })
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="open" class="backdrop" @click.self="requestClose">
+      <div v-if="open" class="backdrop" :style="{ zIndex }" @click.self="onBackdropClick">
         <div
           ref="panel"
           :class="['panel', { 'panel-sheet': sheet }]"
@@ -101,7 +120,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 200;
   backdrop-filter: blur(2px);
 }
 

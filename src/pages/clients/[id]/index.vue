@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { Client, StoredFile, Work } from '~/types/models'
+import type { Appointment, Client, StoredFile, Work } from '~/types/models'
 import { clientRepository } from '~/database/repositories/clients'
 import { workRepository } from '~/database/repositories/works'
 import { fileRepository } from '~/database/repositories/files'
+import { appointmentRepository } from '~/database/repositories/appointments'
 import { useToasts } from '~/composables/useToasts'
 import { useConfirm } from '~/composables/useConfirm'
 import { useAppStore } from '~/stores/app'
@@ -18,6 +19,9 @@ import FileThumb from '~/components/FileThumb.vue'
 import FileViewer from '~/components/FileViewer.vue'
 import ProgressBar from '~/components/ProgressBar.vue'
 import WorkForm from '~/components/WorkForm.vue'
+import AppointmentForm from '~/components/AppointmentForm.vue'
+import AppointmentItem from '~/components/AppointmentItem.vue'
+import { startOfLocalDay } from '~/utils/schedule'
 
 const route = useRoute()
 const toasts = useToasts()
@@ -33,6 +37,9 @@ const notFound = ref(false)
 
 const workModal = ref<{ open: boolean; work?: Work }>({ open: false })
 const savingWork = ref(false)
+const appointments = ref<Appointment[]>([])
+const visitModal = ref<{ open: boolean; appointment?: Appointment }>({ open: false })
+const savingVisit = ref(false)
 const uploading = ref<{ active: boolean; done: number; total: number }>({
   active: false,
   done: 0,
@@ -78,9 +85,10 @@ async function load(): Promise<void> {
       return
     }
     client.value = found
-    ;[works.value, files.value] = await Promise.all([
+    ;[works.value, files.value, appointments.value] = await Promise.all([
       workRepository().getByClientId(clientId.value),
       fileRepository().getByClientId(clientId.value),
+      appointmentRepository().getByClientId(clientId.value),
     ])
   } catch (error) {
     toasts.error(error, 'client.load')
@@ -140,6 +148,76 @@ async function deleteWork(work: Work): Promise<void> {
     await app.refreshCounts()
   } catch (error) {
     toasts.error(error, 'work.delete')
+  }
+}
+
+// ---- appointments ---------------------------------------------------------
+
+const upcomingVisits = computed(() => {
+  const today = startOfLocalDay()
+  return appointments.value
+    .filter((a) => a.at >= today && a.status === 'scheduled')
+    .sort((a, b) => a.at.localeCompare(b.at))
+})
+
+const pastVisits = computed(() => {
+  const today = startOfLocalDay()
+  return appointments.value.filter((a) => a.at < today || a.status !== 'scheduled')
+})
+
+async function saveVisit(draft: {
+  at: string
+  title: string
+  notes: string
+  durationMinutes: number
+  remindMinutesBefore: number
+}): Promise<void> {
+  savingVisit.value = true
+  try {
+    if (visitModal.value.appointment) {
+      await appointmentRepository().update(visitModal.value.appointment.id, draft)
+      toasts.success('Визит обновлён')
+    } else {
+      await appointmentRepository().create({ clientId: clientId.value, ...draft })
+      toasts.success('Визит запланирован')
+    }
+    visitModal.value = { open: false }
+    await load()
+    await app.refreshCounts()
+    await app.refreshAgenda()
+  } catch (error) {
+    toasts.error(error, 'visit.save')
+  } finally {
+    savingVisit.value = false
+  }
+}
+
+async function setVisitStatus(visit: Appointment, status: Appointment['status']): Promise<void> {
+  try {
+    await appointmentRepository().setStatus(visit.id, status)
+    await load()
+    await app.refreshAgenda()
+  } catch (error) {
+    toasts.error(error, 'visit.status')
+  }
+}
+
+async function deleteVisit(visit: Appointment): Promise<void> {
+  const ok = await confirm({
+    title: 'Удалить визит?',
+    message: `«${visit.title}» будет удалён из расписания.`,
+    confirmLabel: 'Удалить',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await appointmentRepository().softDelete(visit.id)
+    toasts.success('Визит удалён')
+    await load()
+    await app.refreshCounts()
+    await app.refreshAgenda()
+  } catch (error) {
+    toasts.error(error, 'visit.delete')
   }
 }
 
@@ -305,6 +383,56 @@ onMounted(load)
         </template>
       </section>
 
+      <!-- Visits -->
+      <section class="card">
+        <div class="section-head">
+          <p class="card-title">Визиты</p>
+          <AppButton size="sm" variant="primary" @click="visitModal = { open: true }">
+            + Визит
+          </AppButton>
+        </div>
+
+        <NuxtLink v-if="upcomingVisits.length && app.notificationHint" to="/settings" class="notice">
+          <span>{{ app.notificationHint }}</span>
+          <span aria-hidden="true">&rsaquo;</span>
+        </NuxtLink>
+
+        <EmptyState
+          v-if="!appointments.length"
+          title="Визитов пока нет"
+          description="Запланируйте приём — приложение напомнит о нём заранее."
+        />
+
+        <template v-else>
+          <ul v-if="upcomingVisits.length" class="visits">
+            <AppointmentItem
+              v-for="visit in upcomingVisits"
+              :key="visit.id"
+              :appointment="visit"
+              hide-client
+              @edit="visitModal = { open: true, appointment: visit }"
+              @status="setVisitStatus(visit, $event)"
+              @remove="deleteVisit(visit)"
+            />
+          </ul>
+
+          <details v-if="pastVisits.length" class="history">
+            <summary>История визитов ({{ pastVisits.length }})</summary>
+            <ul class="visits">
+              <AppointmentItem
+                v-for="visit in pastVisits"
+                :key="visit.id"
+                :appointment="visit"
+                hide-client
+                @edit="visitModal = { open: true, appointment: visit }"
+                @status="setVisitStatus(visit, $event)"
+                @remove="deleteVisit(visit)"
+              />
+            </ul>
+          </details>
+        </template>
+      </section>
+
       <!-- Works -->
       <section class="card">
         <div class="section-head">
@@ -419,6 +547,23 @@ onMounted(load)
         @change="onWorkFileChange"
       />
 
+      <!-- Visit editor -->
+      <AppModal
+        :open="visitModal.open"
+        :title="visitModal.appointment ? 'Изменить визит' : 'Новый визит'"
+        @close="visitModal = { open: false }"
+      >
+        <AppointmentForm
+          :key="visitModal.appointment?.id ?? 'new'"
+          :appointment="visitModal.appointment"
+          :saving="savingVisit"
+          :default-remind-minutes-before="app.settings.defaultRemindMinutesBefore"
+          :notifications-active="app.notificationsActive"
+          @submit="saveVisit"
+          @cancel="visitModal = { open: false }"
+        />
+      </AppModal>
+
       <!-- Work editor -->
       <AppModal
         :open="workModal.open"
@@ -481,6 +626,45 @@ onMounted(load)
 .detail dd {
   margin: 0;
   font-size: 0.9375rem;
+}
+
+.visits {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--c-warning-soft);
+  color: var(--c-text);
+  font-size: 0.8125rem;
+  margin-bottom: 10px;
+  min-height: 40px;
+}
+
+.history {
+  margin-top: 10px;
+}
+
+.history summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--c-text-muted);
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+}
+
+.history .visits {
+  margin-top: 8px;
 }
 
 .works {

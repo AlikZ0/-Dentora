@@ -6,6 +6,15 @@
 
 /** ISO-8601 timestamp, e.g. `2026-08-23T19:42:11.512Z`. */
 export type IsoDateTime = string
+/**
+ * Local wall-clock date and time, e.g. `2026-08-24T10:30`.
+ *
+ * Deliberately zone-less: a visit booked for 10:30 is 10:30 wherever the
+ * person happens to be. Storing a UTC instant would shift every appointment
+ * when a backup moved between devices in different time zones. It also sorts
+ * correctly as a plain string, so it can be indexed directly.
+ */
+export type LocalDateTime = string
 /** Calendar date without time, e.g. `2026-08-23`. */
 export type IsoDate = string
 /** UUID v4, e.g. `550e8400-e29b-41d4-a716-446655440000`. */
@@ -84,6 +93,35 @@ export interface MetaRecord<T = unknown> {
   value: T
 }
 
+/** Where an appointment stands. Only `scheduled` visits produce reminders. */
+export type AppointmentStatus = 'scheduled' | 'done' | 'cancelled' | 'noshow'
+
+export interface Appointment {
+  id: Uuid
+  clientId: Uuid
+  /** Local start time of the visit. */
+  at: LocalDateTime
+  durationMinutes: number
+  title: string
+  notes: string
+  status: AppointmentStatus
+  /** Lead time for the reminder, in minutes before `at`. */
+  remindMinutesBefore: number
+  /** Set once the reminder fired, so it is never shown twice. */
+  notifiedAt?: IsoDateTime
+  createdAt: IsoDateTime
+  updatedAt: IsoDateTime
+  deleted: DeletedFlag
+  deletedAt?: IsoDateTime
+}
+
+export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
+  scheduled: 'Запланирован',
+  done: 'Состоялся',
+  cancelled: 'Отменён',
+  noshow: 'Не пришёл',
+}
+
 export interface BackupStats {
   lastExportAt?: IsoDateTime
   lastImportAt?: IsoDateTime
@@ -97,10 +135,29 @@ export interface AppSettings {
   /** Default to compressing photos before storing them. */
   compressPhotos: boolean
   theme: 'system' | 'light' | 'dark'
+  /** Master switch for visit reminders. */
+  appointmentNotifications: boolean
+  /** Default lead time offered when booking a visit. */
+  defaultRemindMinutesBefore: number
+  /** Also show a summary of the day's visits when the app is first opened. */
+  dailyAgenda: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   dailyBackupReminder: true,
   compressPhotos: false,
   theme: 'system',
+  appointmentNotifications: false,
+  defaultRemindMinutesBefore: 60,
+  dailyAgenda: true,
 }
+
+/** Lead times offered in the UI. */
+export const REMINDER_CHOICES = [
+  { value: 0, label: 'В момент визита' },
+  { value: 15, label: 'За 15 минут' },
+  { value: 30, label: 'За 30 минут' },
+  { value: 60, label: 'За час' },
+  { value: 180, label: 'За 3 часа' },
+  { value: 1440, label: 'За день' },
+] as const

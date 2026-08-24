@@ -41,11 +41,31 @@ test('shows the bottom tab bar instead of the sidebar', async ({ page }) => {
   await expect(page.locator('.sidebar')).toBeHidden()
 
   const tabs = page.locator('.bottom-nav .tab')
-  await expect(tabs).toHaveCount(4)
+  await expect(tabs).toHaveCount(5)
   await expect(tabs.nth(0)).toContainText('Главная')
   await expect(tabs.nth(1)).toContainText('Клиенты')
-  await expect(tabs.nth(2)).toContainText('Backup')
-  await expect(tabs.nth(3)).toContainText('Ещё')
+  await expect(tabs.nth(2)).toContainText('Визиты')
+  await expect(tabs.nth(3)).toContainText('Backup')
+  await expect(tabs.nth(4)).toContainText('Ещё')
+
+  // Five tabs must still fit without wrapping or clipping their labels.
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ width, height: 780 })
+    const boxes = await tabs.evaluateAll((nodes) =>
+      nodes.map((n) => {
+        const label = n.querySelector('.tab-label') as HTMLElement
+        return {
+          height: n.getBoundingClientRect().height,
+          clipped: label.scrollWidth > label.clientWidth + 1,
+        }
+      }),
+    )
+    expect(boxes).toHaveLength(5)
+    for (const box of boxes) {
+      expect(box.height, `tab height at ${width}px`).toBeGreaterThanOrEqual(44)
+      expect(box.clipped, `label clipped at ${width}px`).toBe(false)
+    }
+  }
 })
 
 test('navigates through the bottom tab bar', async ({ page }) => {
@@ -57,7 +77,15 @@ test('navigates through the bottom tab bar', async ({ page }) => {
 })
 
 test('never scrolls horizontally, on any page', async ({ page }) => {
-  for (const path of ['/', '/clients', '/clients/new', '/backup', '/settings', '/settings/storage']) {
+  for (const path of [
+    '/',
+    '/clients',
+    '/clients/new',
+    '/schedule',
+    '/backup',
+    '/settings',
+    '/settings/storage',
+  ]) {
     await boot(page, path)
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

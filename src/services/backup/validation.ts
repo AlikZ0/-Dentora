@@ -5,10 +5,11 @@ import {
   type BackupFileEntry,
   type BackupManifest,
 } from '~/types/backup'
-import type { Client, Work } from '~/types/models'
+import type { Appointment, AppointmentStatus, Client, Work } from '~/types/models'
 import { currentDatabaseVersion } from '~/database/db'
 import { BackupFormatError } from '~/utils/errors'
 import { isUuid } from '~/utils/id'
+import { isValidLocalDateTime } from '~/utils/schedule'
 
 /**
  * Everything an unknown .zip has to survive before a single byte reaches
@@ -79,6 +80,7 @@ export function validateManifest(input: unknown): BackupManifest {
       clients: Number(counts.clients) || 0,
       works: Number(counts.works) || 0,
       files: Number(counts.files) || 0,
+      appointments: Number(counts.appointments) || 0,
     },
     totalFileSize: Number(m.totalFileSize) || 0,
     label: typeof m.label === 'string' ? m.label : undefined,
@@ -130,6 +132,41 @@ function normaliseWork(raw: unknown, index: number, clientIds: Set<string>): Wor
 }
 
 const KINDS = new Set(['xray', 'photo', 'document', 'other'])
+const STATUSES = new Set<AppointmentStatus>(['scheduled', 'done', 'cancelled', 'noshow'])
+
+function normaliseAppointment(
+  raw: unknown,
+  index: number,
+  clientIds: Set<string>,
+): Appointment | null {
+  const a = raw as Partial<Appointment>
+  if (!isUuid(a?.id)) fail(`Запись визита №${index + 1} повреждена: отсутствует идентификатор.`)
+  if (!isUuid(a.clientId)) fail(`Запись визита №${index + 1} повреждена: не указан клиент.`)
+  // A visit whose client is not in this backup has nothing to attach to.
+  if (!clientIds.has(a.clientId!)) return null
+
+  const createdAt = typeof a.createdAt === 'string' ? a.createdAt : new Date(0).toISOString()
+  // An unreadable time would make the visit invisible everywhere; drop it
+  // rather than importing a row that can never be displayed or reminded on.
+  if (!isValidLocalDateTime(a.at)) return null
+
+  const remind = Number(a.remindMinutesBefore)
+  return {
+    id: a.id!,
+    clientId: a.clientId!,
+    at: a.at,
+    durationMinutes: Number.isFinite(Number(a.durationMinutes)) ? Number(a.durationMinutes) : 30,
+    title: typeof a.title === 'string' && a.title ? a.title : 'Визит',
+    notes: typeof a.notes === 'string' ? a.notes : '',
+    status: STATUSES.has(a.status as AppointmentStatus) ? a.status! : 'scheduled',
+    remindMinutesBefore: Number.isFinite(remind) && remind >= 0 ? remind : 60,
+    notifiedAt: typeof a.notifiedAt === 'string' ? a.notifiedAt : undefined,
+    createdAt,
+    updatedAt: typeof a.updatedAt === 'string' ? a.updatedAt : createdAt,
+    deleted: a.deleted === 1 ? 1 : 0,
+    deletedAt: typeof a.deletedAt === 'string' ? a.deletedAt : undefined,
+  }
+}
 
 /** Rejects `../` traversal and absolute paths inside the archive. */
 export function isSafeArchivePath(path: string): boolean {
@@ -184,7 +221,7 @@ export function validateDatabase(input: unknown): BackupDatabase {
   if (!input || typeof input !== 'object') {
     fail('В архиве нет базы данных (database.json). Файл повреждён.')
   }
-  const raw = input as Partial<Record<'clients' | 'works' | 'files', unknown>>
+  const raw = input as Partial<Record<'clients' | 'works' | 'files' | 'appointments', unknown>>
   if (!Array.isArray(raw.clients)) fail('В backup нет списка клиентов. Файл повреждён.')
 
   const clients = raw.clients.map(normaliseClient)
@@ -199,11 +236,21 @@ export function validateDatabase(input: unknown): BackupDatabase {
     .map((f, i) => normaliseFile(f, i, clientIds, workIds))
     .filter((f): f is BackupFileEntry => f !== null)
 
+  // Absent in archives written before visits existed - that is not an error.
+  const appointments = (Array.isArray(raw.appointments) ? raw.appointments : [])
+    .map((a, i) => normaliseAppointment(a, i, clientIds))
+    .filter((a): a is Appointment => a !== null)
+
   const seen = new Set<string>()
-  for (const id of [...clientIds, ...workIds, ...files.map((f) => f.id)]) {
+  for (const id of [
+    ...clientIds,
+    ...workIds,
+    ...files.map((f) => f.id),
+    ...appointments.map((a) => a.id),
+  ]) {
     if (seen.has(id)) fail('Backup содержит повторяющиеся идентификаторы и повреждён.', 'duplicate_uuid')
     seen.add(id)
   }
 
-  return { clients, works, files }
+  return { clients, works, files, appointments }
 }

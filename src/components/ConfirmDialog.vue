@@ -22,6 +22,7 @@ const phraseSatisfied = computed(() => {
     :open="Boolean(pending)"
     :title="pending?.title ?? ''"
     :sheet="true"
+    :backdrop-dismiss="!pending?.danger"
     @close="settle(false)"
   >
     <div class="stack-sm stack">

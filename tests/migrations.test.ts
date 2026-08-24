@@ -4,6 +4,7 @@ import { DentoraDatabase } from '~/database/db'
 import { DB_VERSION, versions } from '~/database/schema'
 import { inferFileKind } from '~/database/migrations'
 import { createFileRepository } from '~/database/repositories/files'
+import { createAppointmentRepository } from '~/database/repositories/appointments'
 
 const opened: Dexie[] = []
 function track<T extends Dexie>(instance: T): T {
@@ -27,8 +28,19 @@ function legacyV1(name: string): Dexie {
 
 describe('schema versioning', () => {
   it('declares one entry per version, in order, with no gaps', () => {
-    expect(versions.map((v) => v.version)).toEqual([1, 2])
+    // Self-maintaining: a new version only has to be appended, but it must be
+    // exactly one higher than the last and must match DB_VERSION.
+    expect(versions.map((v) => v.version)).toEqual(
+      Array.from({ length: versions.length }, (_, i) => i + 1),
+    )
     expect(versions[versions.length - 1]!.version).toBe(DB_VERSION)
+  })
+
+  it('adds the appointments store in v3 without touching earlier versions', () => {
+    expect(versions[2]!.stores.appointments).toBeTruthy()
+    // v1 and v2 must not mention it - they shipped before visits existed.
+    expect(versions[0]!.stores.appointments).toBeUndefined()
+    expect(versions[1]!.stores.appointments).toBeUndefined()
   })
 
   it('never redefines a historical version in place', () => {
@@ -133,6 +145,16 @@ describe('v1 -> v2 migration', () => {
       '550e8400-e29b-41d4-a716-446655440002',
     )
     expect(blob?.size).toBe(64)
+
+    // The v3 store exists and is usable on a database that started at v1.
+    const appointments = createAppointmentRepository(upgraded)
+    expect(await appointments.count()).toBe(0)
+    const visit = await appointments.create({
+      clientId: '550e8400-e29b-41d4-a716-446655440000',
+      at: '2026-09-01T10:00',
+    })
+    expect(await appointments.getById(visit.id)).toBeDefined()
+    expect((await appointments.upcoming({ from: '2026-01-01T00:00' })).length).toBe(1)
   })
 
   it('is idempotent - reopening at v2 changes nothing', async () => {

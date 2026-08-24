@@ -4,6 +4,9 @@ import { useAppStore } from '~/stores/app'
 import { usePwa } from '~/composables/usePwa'
 import { useToasts } from '~/composables/useToasts'
 import { formatBytes } from '~/utils/format'
+import { REMINDER_CHOICES } from '~/types/models'
+import { notificationsSupported } from '~/services/notifications/notifications'
+import { showNotification } from '~/services/notifications/notifications'
 
 useHead({ title: 'Настройки — Dentora' })
 
@@ -20,12 +23,67 @@ async function toggleReminder(value: boolean): Promise<void> {
   }
 }
 
+/**
+ * The permission prompt must run inside this click - browsers ignore a
+ * request made later, from a timer or a promise chain the user did not start.
+ */
+async function toggleAppointmentNotifications(value: boolean): Promise<void> {
+  try {
+    const state = await app.setAppointmentNotifications(value)
+    if (!value) {
+      toasts.info('Напоминания о визитах выключены')
+    } else if (state === 'granted') {
+      toasts.success('Напоминания о визитах включены')
+    } else if (state === 'denied') {
+      toasts.warning(
+        'Браузер заблокировал уведомления. Разрешите их для этого сайта в настройках браузера.',
+      )
+    } else if (state === 'unsupported') {
+      toasts.warning('Этот браузер не поддерживает уведомления.')
+    } else {
+      toasts.info('Разрешение на уведомления не выдано.')
+    }
+  } catch (error) {
+    toasts.error(error, 'settings.notifications')
+  }
+}
+
+async function setLeadTime(minutes: number): Promise<void> {
+  try {
+    await app.saveSettings({ defaultRemindMinutesBefore: minutes })
+  } catch (error) {
+    toasts.error(error, 'settings.save')
+  }
+}
+
+async function toggleAgenda(value: boolean): Promise<void> {
+  try {
+    await app.saveSettings({ dailyAgenda: value })
+  } catch (error) {
+    toasts.error(error, 'settings.save')
+  }
+}
+
+async function sendTestNotification(): Promise<void> {
+  const ok = await showNotification({
+    title: 'Проверка уведомлений',
+    body: 'Так будет выглядеть напоминание о визите.',
+    tag: 'test-notification',
+    url: '/schedule',
+  })
+  if (ok) toasts.success('Уведомление отправлено')
+  else toasts.warning('Не удалось показать уведомление на этом устройстве.')
+}
+
 async function install(): Promise<void> {
   const accepted = await pwa.install()
   if (accepted) toasts.success('Приложение установлено')
 }
 
-onMounted(() => app.refreshAll())
+onMounted(async () => {
+  await app.refreshAll()
+  app.refreshNotificationState()
+})
 </script>
 
 <template>
@@ -43,6 +101,16 @@ onMounted(() => app.refreshAll())
           <span class="strong">Хранилище</span>
           <span class="tiny muted">
             {{ formatBytes(app.storage.usage) }} использовано · {{ app.counts.files }} файлов
+          </span>
+        </span>
+        <span class="chevron" aria-hidden="true">&rsaquo;</span>
+      </NuxtLink>
+
+      <NuxtLink to="/schedule" class="link-row">
+        <span>
+          <span class="strong">Визиты</span>
+          <span class="tiny muted">
+            Сегодня: {{ app.agenda.today.length }} · завтра: {{ app.agenda.tomorrow.length }}
           </span>
         </span>
         <span class="chevron" aria-hidden="true">&rsaquo;</span>
@@ -66,7 +134,83 @@ onMounted(() => app.refreshAll())
     </nav>
 
     <section class="card">
-      <p class="card-title">Напоминания</p>
+      <p class="card-title">Уведомления о визитах</p>
+
+      <label class="toggle">
+        <span>
+          <span class="strong">Напоминать о визитах</span>
+          <span class="tiny muted">
+            Системное уведомление перед приёмом запланированного клиента
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          :checked="app.settings.appointmentNotifications"
+          :disabled="!notificationsSupported()"
+          @change="toggleAppointmentNotifications(($event.target as HTMLInputElement).checked)"
+        />
+      </label>
+
+      <p v-if="!notificationsSupported()" class="status status-warn">
+        Этот браузер не поддерживает уведомления. Визиты всё равно видны в разделе «Визиты».
+      </p>
+      <p v-else-if="app.notificationState === 'denied'" class="status status-warn">
+        Уведомления заблокированы для этого сайта. Разрешите их в настройках браузера
+        (значок замка рядом с адресом), затем включите переключатель снова.
+      </p>
+      <p v-else-if="app.notificationsActive" class="status status-ok">
+        Уведомления разрешены.
+      </p>
+
+      <template v-if="app.settings.appointmentNotifications">
+        <hr class="divider" />
+
+        <div class="setting">
+          <label class="setting-label" for="leadTime">
+            <span class="strong">За сколько напоминать</span>
+            <span class="tiny muted">Значение по умолчанию для новых визитов</span>
+          </label>
+          <select
+            id="leadTime"
+            class="select"
+            :value="app.settings.defaultRemindMinutesBefore"
+            @change="setLeadTime(Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="choice in REMINDER_CHOICES" :key="choice.value" :value="choice.value">
+              {{ choice.label }}
+            </option>
+          </select>
+        </div>
+
+        <label class="toggle">
+          <span>
+            <span class="strong">Сводка на день</span>
+            <span class="tiny muted">
+              Один раз при первом открытии показывать, сколько визитов сегодня
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            :checked="app.settings.dailyAgenda"
+            @change="toggleAgenda(($event.target as HTMLInputElement).checked)"
+          />
+        </label>
+
+        <button v-if="app.notificationsActive" class="test-btn" @click="sendTestNotification">
+          Проверить уведомление
+        </button>
+      </template>
+
+      <p class="limitation tiny">
+        Напоминания приходят, пока приложение открыто или свёрнуто. Приложение работает
+        без сервера, поэтому доставить уведомление при полностью закрытом приложении
+        браузер не может — держите Dentora открытой в фоне или заглядывайте в раздел
+        «Визиты».
+      </p>
+    </section>
+
+    <section class="card">
+      <p class="card-title">Напоминания о backup</p>
       <label class="toggle">
         <span>
           <span class="strong">Напоминать о backup раз в день</span>
@@ -129,6 +273,63 @@ onMounted(() => app.refreshAll())
 
 <style scoped>
 .page-narrow { max-width: 720px; }
+
+.status {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+}
+.status-warn { background: var(--c-warning-soft); }
+.status-ok { background: var(--c-success-soft); color: var(--c-text); }
+
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--touch);
+  margin-bottom: 4px;
+}
+
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.select {
+  min-height: var(--touch);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  font-size: 16px;
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.test-btn {
+  margin-top: 10px;
+  min-height: var(--touch);
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  font-weight: 550;
+}
+
+.limitation {
+  margin-top: 12px;
+  color: var(--c-text-faint);
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .setting { flex-direction: column; align-items: stretch; }
+  .select { width: 100%; }
+}
 .card + .card { margin-top: 16px; }
 
 .links {

@@ -6,6 +6,7 @@ const app = useAppStore()
 const items = [
   { to: '/', label: 'Главная', short: 'Главная', icon: '\u{1F3E0}' },
   { to: '/clients', label: 'Клиенты', short: 'Клиенты', icon: '\u{1F465}' },
+  { to: '/schedule', label: 'Визиты', short: 'Визиты', icon: '\u{1F4C5}' },
   { to: '/backup', label: 'Backup', short: 'Backup', icon: '\u{1F4E6}' },
   { to: '/settings', label: 'Настройки', short: 'Ещё', icon: '\u{2699}\u{FE0F}' },
 ]

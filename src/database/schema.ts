@@ -13,13 +13,14 @@
 export const DB_NAME = 'dentora'
 
 /** Current schema version. Bump + append to `versions` when changing stores. */
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 export const TABLES = {
   clients: 'clients',
   works: 'works',
   files: 'files',
   fileBlobs: 'fileBlobs',
+  appointments: 'appointments',
   meta: 'meta',
 } as const
 
@@ -35,6 +36,7 @@ export interface SchemaVersion {
  * v1 - initial shipped schema.
  * v2 - adds `files.kind` (x-ray / photo / document) plus its index, and
  *      indexes `files.workId` so a work can list its own attachments.
+ * v3 - adds the `appointments` store for scheduled visits and their reminders.
  */
 export const versions: SchemaVersion[] = [
   {
@@ -55,6 +57,16 @@ export const versions: SchemaVersion[] = [
       // Only the changed store needs to be re-declared; Dexie carries the rest over.
       files:
         'id, clientId, workId, [clientId+createdAt], [clientId+kind], kind, createdAt, updatedAt, deleted',
+    },
+  },
+  {
+    version: 3,
+    note: 'Добавлены визиты и напоминания о них.',
+    stores: {
+      // `at` is a sortable local wall-clock string, so the schedule can be
+      // read straight off the index in chronological order.
+      appointments:
+        'id, clientId, at, status, [status+at], [clientId+at], notifiedAt, updatedAt, deleted',
     },
   },
 ]

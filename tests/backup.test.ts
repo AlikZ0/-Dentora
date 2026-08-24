@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { freshDatabase, repositories, TEST_ITERATIONS, type Repos } from './helpers'
-import type { DentoraDatabase } from '~/database/db'
+import { currentDatabaseVersion, type DentoraDatabase } from '~/database/db'
 import { exportBackup } from '~/services/backup/export'
 import { importBackup, isEncryptedArchive, previewBackup } from '~/services/backup/import'
 import { BACKUP_FORMAT } from '~/types/backup'
@@ -79,8 +79,13 @@ describe('export', () => {
     expect(result.encrypted).toBe(false)
     expect(result.manifest.format).toBe(BACKUP_FORMAT)
     expect(result.manifest.version).toBe(1)
-    expect(result.manifest.databaseVersion).toBe(2)
-    expect(result.manifest.counts).toEqual({ clients: 1, works: 1, files: 2 })
+    expect(result.manifest.databaseVersion).toBe(currentDatabaseVersion)
+    expect(result.manifest.counts).toEqual({
+      clients: 1,
+      works: 1,
+      files: 2,
+      appointments: 0,
+    })
     expect(result.manifest.totalFileSize).toBe(4096 + 512)
     expect(result.blob.size).toBeGreaterThan(4096)
   })

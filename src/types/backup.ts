@@ -1,4 +1,4 @@
-import type { Client, StoredFile, Work } from './models'
+import type { Appointment, Client, StoredFile, Work } from './models'
 
 export const BACKUP_FORMAT = 'client-app-backup'
 export const BACKUP_FORMAT_VERSION = 1
@@ -14,6 +14,8 @@ export interface BackupManifest {
     clients: number
     works: number
     files: number
+    /** Absent in archives written before visits existed. */
+    appointments?: number
   }
   /** Total size of the payload files in bytes (uncompressed). */
   totalFileSize: number
@@ -33,6 +35,8 @@ export interface BackupDatabase {
   clients: Client[]
   works: Work[]
   files: BackupFileEntry[]
+  /** Added in database version 3; older archives simply omit it. */
+  appointments: Appointment[]
 }
 
 export type ImportMode = 'replace' | 'merge'
@@ -42,6 +46,7 @@ export interface BackupPreview {
   clients: number
   works: number
   files: number
+  appointments: number
   /** Size of the selected archive on disk. */
   archiveSize: number
   /** Sum of the payload file sizes. */
@@ -56,6 +61,9 @@ export interface MergeReport {
   worksAdded: number
   worksUpdated: number
   worksSkipped: number
+  appointmentsAdded: number
+  appointmentsUpdated: number
+  appointmentsSkipped: number
   filesAdded: number
   filesUpdated: number
   filesSkipped: number
