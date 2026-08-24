@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import type { Client, FileBlob, MetaRecord, StoredFile, Work } from '~/types/models'
+import type { Appointment, Client, FileBlob, MetaRecord, StoredFile, Work } from '~/types/models'
 import { DB_NAME, DB_VERSION, versions } from './schema'
 import { upgradeToV2 } from './migrations'
 
@@ -14,6 +14,7 @@ export class DentoraDatabase extends Dexie {
   works!: Table<Work, string>
   files!: Table<StoredFile, string>
   fileBlobs!: Table<FileBlob, string>
+  appointments!: Table<Appointment, string>
   meta!: Table<MetaRecord, string>
 
   constructor(name: string = DB_NAME) {
@@ -51,13 +52,14 @@ export const currentDatabaseVersion = DB_VERSION
 export async function clearAllData(target: DentoraDatabase = db()): Promise<void> {
   await target.transaction(
     'rw',
-    [target.clients, target.works, target.files, target.fileBlobs],
+    [target.clients, target.works, target.files, target.fileBlobs, target.appointments],
     async () => {
       await Promise.all([
         target.clients.clear(),
         target.works.clear(),
         target.files.clear(),
         target.fileBlobs.clear(),
+        target.appointments.clear(),
       ])
     },
   )

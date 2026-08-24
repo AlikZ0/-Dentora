@@ -6,7 +6,7 @@ import type {
   ImportMode,
   ImportResult,
 } from '~/types/backup'
-import type { Client, StoredFile, Work } from '~/types/models'
+import type { Appointment, Client, StoredFile, Work } from '~/types/models'
 import { clearAllData, db, type DentoraDatabase } from '~/database/db'
 import { createMetaRepository } from '~/database/repositories/meta'
 import { STOP_READING, decodeText, readZip } from './zip'
@@ -107,6 +107,7 @@ export async function previewBackup(
     clients: db_.clients.length,
     works: db_.works.length,
     files: db_.files.length,
+    appointments: db_.appointments.length,
     archiveSize: archive.size,
     payloadSize: mf.totalFileSize || db_.files.reduce((s, f) => s + f.size, 0),
     encrypted,
@@ -168,8 +169,10 @@ export async function importBackup(
   // --- clients & works -------------------------------------------------
   const localClients = await database.clients.toArray()
   const localWorks = await database.works.toArray()
+  const localAppointments = await database.appointments.toArray()
   const clientById = new Map(localClients.map((c) => [c.id, c]))
   const workById = new Map(localWorks.map((w) => [w.id, w]))
+  const appointmentById = new Map(localAppointments.map((a) => [a.id, a]))
 
   const clientsToWrite: Client[] = []
   for (const client of data.clients) {
@@ -199,11 +202,32 @@ export async function importBackup(
     }
   }
 
+  const appointmentsToWrite: Appointment[] = []
+  for (const appointment of data.appointments) {
+    const local = appointmentById.get(appointment.id)
+    if (!local) {
+      appointmentsToWrite.push(appointment)
+      report.appointmentsAdded += 1
+    } else if (appointment.updatedAt > local.updatedAt) {
+      // Keep the local delivery flag: whether *this* device already showed the
+      // reminder is device-local state, not something a backup should reset.
+      appointmentsToWrite.push({ ...appointment, notifiedAt: local.notifiedAt })
+      report.appointmentsUpdated += 1
+    } else {
+      report.appointmentsSkipped += 1
+    }
+  }
+
   try {
-    await database.transaction('rw', [database.clients, database.works], async () => {
-      if (clientsToWrite.length) await database.clients.bulkPut(clientsToWrite)
-      if (worksToWrite.length) await database.works.bulkPut(worksToWrite)
-    })
+    await database.transaction(
+      'rw',
+      [database.clients, database.works, database.appointments],
+      async () => {
+        if (clientsToWrite.length) await database.clients.bulkPut(clientsToWrite)
+        if (worksToWrite.length) await database.works.bulkPut(worksToWrite)
+        if (appointmentsToWrite.length) await database.appointments.bulkPut(appointmentsToWrite)
+      },
+    )
   } catch (error) {
     if (isQuotaError(error)) throw new QuotaError('import_clients_works')
     throw error
@@ -280,6 +304,7 @@ export async function importBackup(
     'backup.import',
     `mode=${mode} clients=+${report.clientsAdded}/~${report.clientsUpdated} ` +
       `works=+${report.worksAdded}/~${report.worksUpdated} ` +
+      `appointments=+${report.appointmentsAdded}/~${report.appointmentsUpdated} ` +
       `files=+${report.filesAdded}/~${report.filesUpdated} source=${preview.manifest.appVersion}`,
   )
 

@@ -10,6 +10,7 @@ import { createFileRepository } from '~/database/repositories/files'
 import { createClientRepository } from '~/database/repositories/clients'
 import { createWorkRepository } from '~/database/repositories/works'
 import { createMetaRepository } from '~/database/repositories/meta'
+import { createAppointmentRepository } from '~/database/repositories/appointments'
 import { createZip, type ZipEntryInput } from './zip'
 import { DATABASE_PATH, MANIFEST_PATH, backupFileName, filePathFor } from './paths'
 import { encryptBlob } from '~/services/encryption/crypto'
@@ -71,6 +72,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<ExportR
   const works = createWorkRepository(database)
   const files = createFileRepository(database)
   const meta = createMetaRepository(database)
+  const appointments = createAppointmentRepository(database)
 
   const report = (stage: ExportStage, ratio: number | null, label: string) =>
     options.onProgress?.({ stage, ratio, label })
@@ -78,10 +80,11 @@ export async function exportBackup(options: ExportOptions = {}): Promise<ExportR
   report('collecting', null, 'Читаем базу данных…')
 
   const includeDeleted = options.includeDeleted ?? true
-  const [clientRows, workRows, fileRows] = await Promise.all([
+  const [clientRows, workRows, fileRows, appointmentRows] = await Promise.all([
     clients.all(includeDeleted),
     works.all(includeDeleted),
     files.all(includeDeleted),
+    appointments.all(includeDeleted),
   ])
 
   options.signal?.throwIfAborted()
@@ -110,6 +113,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<ExportR
     clients: clientRows,
     works: workRows,
     files: fileEntries,
+    appointments: appointmentRows,
   }
 
   const createdAt = (options.now ?? new Date()).toISOString()
@@ -123,6 +127,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<ExportR
       clients: clientRows.length,
       works: workRows.length,
       files: fileEntries.length,
+      appointments: appointmentRows.length,
     },
     totalFileSize,
     label: options.label,
@@ -164,7 +169,8 @@ export async function exportBackup(options: ExportOptions = {}): Promise<ExportR
   }
   logger.info(
     'backup.export',
-    `clients=${manifest.counts.clients} works=${manifest.counts.works} files=${manifest.counts.files} bytes=${archive.size}`,
+    `clients=${manifest.counts.clients} works=${manifest.counts.works} ` +
+      `files=${manifest.counts.files} appointments=${appointmentRows.length} bytes=${archive.size}`,
   )
 
   report('done', 1, 'Backup готов')

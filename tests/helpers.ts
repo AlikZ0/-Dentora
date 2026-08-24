@@ -3,6 +3,7 @@ import { createClientRepository } from '~/database/repositories/clients'
 import { createWorkRepository } from '~/database/repositories/works'
 import { createFileRepository } from '~/database/repositories/files'
 import { createMetaRepository } from '~/database/repositories/meta'
+import { createAppointmentRepository } from '~/database/repositories/appointments'
 
 let counter = 0
 
@@ -19,6 +20,7 @@ export function repositories(database: DentoraDatabase) {
     works: createWorkRepository(database),
     files: createFileRepository(database),
     meta: createMetaRepository(database),
+    appointments: createAppointmentRepository(database),
   }
 }
 

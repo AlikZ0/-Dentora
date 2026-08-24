@@ -1,11 +1,18 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AppSettings, BackupStats } from '~/types/models'
+import type { Appointment, AppSettings, BackupStats } from '~/types/models'
 import { DEFAULT_SETTINGS } from '~/types/models'
 import { metaRepository } from '~/database/repositories/meta'
 import { clientRepository } from '~/database/repositories/clients'
 import { workRepository } from '~/database/repositories/works'
 import { fileRepository } from '~/database/repositories/files'
+import { appointmentRepository } from '~/database/repositories/appointments'
+import {
+  notificationPermission,
+  notificationsSupported,
+  requestNotificationPermission,
+  type NotificationPermissionState,
+} from '~/services/notifications/notifications'
 import { estimateStorage, isPersisted, requestPersistence } from '~/services/storage/storage'
 import { isSameLocalDay, todayIso } from '~/utils/datetime'
 import { logger } from '~/utils/logger'
@@ -15,6 +22,7 @@ export interface DashboardCounts {
   works: number
   files: number
   storageUsed: number
+  appointments: number
 }
 
 /**
@@ -24,7 +32,15 @@ export interface DashboardCounts {
 export const useAppStore = defineStore('app', () => {
   const ready = ref(false)
   const online = ref(true)
-  const counts = ref<DashboardCounts>({ clients: 0, works: 0, files: 0, storageUsed: 0 })
+  const counts = ref<DashboardCounts>({
+    clients: 0,
+    works: 0,
+    files: 0,
+    storageUsed: 0,
+    appointments: 0,
+  })
+  const agenda = ref<{ today: Appointment[]; tomorrow: Appointment[] }>({ today: [], tomorrow: [] })
+  const notificationState = ref<NotificationPermissionState>('default')
   const backupStats = ref<BackupStats>({ backupCount: 0 })
   const settings = ref<AppSettings>({ ...DEFAULT_SETTINGS })
   const storage = ref({ usage: 0, quota: 0, ratio: null as number | null, supported: false })
@@ -34,13 +50,38 @@ export const useAppStore = defineStore('app', () => {
   const backedUpToday = computed(() => isSameLocalDay(backupStats.value.lastExportAt))
 
   async function refreshCounts(): Promise<void> {
-    const [clients, works, files, storageUsed] = await Promise.all([
+    const [clients, works, files, storageUsed, appointments] = await Promise.all([
       clientRepository().count(),
       workRepository().count(),
       fileRepository().count(),
       fileRepository().totalSize(),
+      appointmentRepository().count(),
     ])
-    counts.value = { clients, works, files, storageUsed }
+    counts.value = { clients, works, files, storageUsed, appointments }
+  }
+
+  async function refreshAgenda(): Promise<void> {
+    agenda.value = await appointmentRepository().agenda()
+  }
+
+  function refreshNotificationState(): void {
+    notificationState.value = notificationPermission()
+  }
+
+  /**
+   * Turning reminders on has two halves: our own setting and the browser's
+   * permission. Both must be true, and the permission prompt only works from a
+   * user gesture - so this is called straight from the toggle.
+   */
+  async function setAppointmentNotifications(enabled: boolean): Promise<NotificationPermissionState> {
+    if (!enabled) {
+      await saveSettings({ appointmentNotifications: false })
+      return notificationState.value
+    }
+    const state = await requestNotificationPermission()
+    notificationState.value = state
+    await saveSettings({ appointmentNotifications: state === 'granted' })
+    return state
   }
 
   async function refreshBackupStats(): Promise<void> {
@@ -53,7 +94,8 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function refreshAll(): Promise<void> {
-    await Promise.all([refreshCounts(), refreshBackupStats(), refreshStorage()])
+    await Promise.all([refreshCounts(), refreshBackupStats(), refreshStorage(), refreshAgenda()])
+    refreshNotificationState()
   }
 
   /**
@@ -97,21 +139,45 @@ export const useAppStore = defineStore('app', () => {
     online.value = value
   }
 
+  /** True only when our setting AND the browser permission are both on. */
+  const notificationsActive = computed(
+    () => settings.value.appointmentNotifications && notificationState.value === 'granted',
+  )
+
+  /** One short line explaining why reminders will not arrive, or empty. */
+  const notificationHint = computed(() => {
+    if (notificationsActive.value) return ''
+    if (!notificationsSupported()) {
+      return 'Этот браузер не поддерживает уведомления. Визиты будут видны в приложении.'
+    }
+    if (notificationState.value === 'denied') {
+      return 'Уведомления заблокированы в настройках браузера — напоминания не придут.'
+    }
+    return 'Напоминания о визитах выключены. Включить в настройках.'
+  })
+
   return {
     ready,
     online,
     counts,
+    agenda,
     backupStats,
     settings,
     storage,
     persisted,
     reminderVisible,
     backedUpToday,
+    notificationState,
+    notificationsActive,
+    notificationHint,
     init,
     refreshAll,
     refreshCounts,
+    refreshAgenda,
     refreshBackupStats,
     refreshStorage,
+    refreshNotificationState,
+    setAppointmentNotifications,
     evaluateReminder,
     dismissReminder,
     saveSettings,

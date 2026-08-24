@@ -5,6 +5,7 @@ import { exportBackup } from '~/services/backup/export'
 import { importBackup, previewBackup } from '~/services/backup/import'
 import { decide, decideFile, planClients } from '~/services/backup/merge'
 import { sha256 } from '~/utils/hash'
+import { createZip } from '~/services/backup/zip'
 import { DecryptionError, AppError } from '~/utils/errors'
 
 function bytes(size: number, fill: number, type = 'image/jpeg'): Blob {
@@ -334,5 +335,159 @@ describe('scale', () => {
     const restored = new Uint8Array(await (await b.files.getBlob(target.id))!.arrayBuffer())
     expect(restored[0]).toBe(42)
     expect(restored.length).toBe(2048)
+  })
+})
+
+describe('visits in backups', () => {
+  it('survives export and import with all of its fields', async () => {
+    const { client } = await addClient(a, 'Визитов')
+    const visit = await a.appointments.create({
+      clientId: client.id,
+      at: '2026-09-01T10:30',
+      title: 'Контрольный осмотр',
+      notes: 'Проверить пломбу 36',
+      durationMinutes: 45,
+      remindMinutesBefore: 180,
+    })
+
+    const { blob, manifest } = await exportBackup({ database: dbA })
+    expect(manifest.counts.appointments).toBe(1)
+
+    const preview = await previewBackup(blob)
+    expect(preview.appointments).toBe(1)
+
+    const result = await importBackup(blob, 'replace', { database: dbB })
+    expect(result.appointmentsAdded).toBe(1)
+
+    const restored = await b.appointments.getById(visit.id)
+    expect(restored).toMatchObject({
+      id: visit.id,
+      clientId: client.id,
+      at: '2026-09-01T10:30',
+      title: 'Контрольный осмотр',
+      notes: 'Проверить пломбу 36',
+      durationMinutes: 45,
+      remindMinutesBefore: 180,
+      status: 'scheduled',
+    })
+  })
+
+  it('merges visits without duplicating them', async () => {
+    const { client } = await addClient(a, 'Визитов')
+    await a.appointments.create({ clientId: client.id, at: '2026-09-01T10:00' })
+    const { blob } = await exportBackup({ database: dbA })
+
+    await importBackup(blob, 'replace', { database: dbB })
+    const again = await importBackup(blob, 'merge', { database: dbB })
+
+    expect(again.appointmentsAdded).toBe(0)
+    expect(again.appointmentsSkipped).toBe(1)
+    expect(await b.appointments.count()).toBe(1)
+  })
+
+  it('keeps the newer edit when a visit is rescheduled on another device', async () => {
+    const { client } = await addClient(a, 'Визитов')
+    const visit = await a.appointments.create({ clientId: client.id, at: '2026-09-01T10:00' })
+    const { blob: fromA } = await exportBackup({ database: dbA })
+    await importBackup(fromA, 'replace', { database: dbB })
+
+    await new Promise((r) => setTimeout(r, 10))
+    await b.appointments.update(visit.id, { at: '2026-09-02T14:00' })
+    const { blob: fromB } = await exportBackup({ database: dbB })
+
+    const merged = await importBackup(fromB, 'merge', { database: dbA })
+    expect(merged.appointmentsUpdated).toBe(1)
+    expect((await a.appointments.getById(visit.id))!.at).toBe('2026-09-02T14:00')
+  })
+
+  it('does not let an incoming backup re-trigger a reminder already shown here', async () => {
+    const { client } = await addClient(a, 'Визитов')
+    const visit = await a.appointments.create({ clientId: client.id, at: '2026-09-01T10:00' })
+    const { blob: fromA } = await exportBackup({ database: dbA })
+    await importBackup(fromA, 'replace', { database: dbB })
+
+    // Device B already showed this reminder.
+    await b.appointments.markNotified(visit.id)
+
+    // Device A edits the visit and B merges that edit in.
+    await new Promise((r) => setTimeout(r, 10))
+    await a.appointments.update(visit.id, { notes: 'Не забыть снимок' })
+    const { blob: edited } = await exportBackup({ database: dbA })
+    await importBackup(edited, 'merge', { database: dbB })
+
+    const onB = await b.appointments.getById(visit.id)
+    expect(onB!.notes).toBe('Не забыть снимок')
+    // Delivery state is device-local and must not be clobbered by the backup.
+    expect(onB!.notifiedAt).toBeDefined()
+  })
+
+  it('drops a visit whose client is not in the backup', async () => {
+    const { client } = await addClient(a, 'Визитов')
+    await a.appointments.create({ clientId: client.id, at: '2026-09-01T10:00' })
+    // A visit pointing at a client that does not exist anywhere.
+    await a.appointments.put({
+      id: '550e8400-e29b-41d4-a716-4466554400ff',
+      clientId: '550e8400-e29b-41d4-a716-4466554400aa',
+      at: '2026-09-03T10:00',
+      durationMinutes: 30,
+      title: 'Сирота',
+      notes: '',
+      status: 'scheduled',
+      remindMinutesBefore: 60,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+      deleted: 0,
+    })
+
+    const { blob } = await exportBackup({ database: dbA })
+    const result = await importBackup(blob, 'replace', { database: dbB })
+
+    expect(result.appointmentsAdded).toBe(1)
+    expect(await b.appointments.count()).toBe(1)
+  })
+
+  it('reads an older backup that has no visits at all', async () => {
+    // Simulates an archive written by the version before visits existed.
+    const archive = await createZip([
+      {
+        path: 'backup/manifest.json',
+        data: JSON.stringify({
+          format: 'client-app-backup',
+          version: 1,
+          createdAt: '2026-08-01T10:00:00.000Z',
+          appVersion: '1.0.0',
+          databaseVersion: 2,
+          counts: { clients: 1, works: 0, files: 0 },
+          totalFileSize: 0,
+        }),
+      },
+      {
+        path: 'backup/database.json',
+        data: JSON.stringify({
+          clients: [
+            {
+              id: '550e8400-e29b-41d4-a716-446655440000',
+              firstName: 'Анна',
+              lastName: 'Старая',
+              arrivalDate: '2026-01-01',
+              notes: '',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+              deleted: 0,
+            },
+          ],
+          works: [],
+          files: [],
+        }),
+      },
+    ])
+
+    const preview = await previewBackup(archive)
+    expect(preview.appointments).toBe(0)
+
+    const result = await importBackup(archive, 'replace', { database: dbB })
+    expect(result.clientsAdded).toBe(1)
+    expect(result.appointmentsAdded).toBe(0)
+    expect(await b.appointments.count()).toBe(0)
   })
 })

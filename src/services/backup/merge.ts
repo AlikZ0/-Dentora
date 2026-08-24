@@ -1,5 +1,5 @@
 import type { BackupFileEntry, MergeReport } from '~/types/backup'
-import type { Client, StoredFile, Work } from '~/types/models'
+import type { Appointment, Client, StoredFile, Work } from '~/types/models'
 
 /**
  * Merge policy.
@@ -32,6 +32,9 @@ export function emptyReport(): MergeReport {
     worksAdded: 0,
     worksUpdated: 0,
     worksSkipped: 0,
+    appointmentsAdded: 0,
+    appointmentsUpdated: 0,
+    appointmentsSkipped: 0,
     filesAdded: 0,
     filesUpdated: 0,
     filesSkipped: 0,
@@ -67,6 +70,13 @@ export function planClients(incoming: Client[], local: Client[]): MergePlan<Clie
 
 export function planWorks(incoming: Work[], local: Work[]): MergePlan<Work> {
   return planFor(incoming, new Map(local.map((w) => [w.id, w])))
+}
+
+export function planAppointments(
+  incoming: Appointment[],
+  local: Appointment[],
+): MergePlan<Appointment> {
+  return planFor(incoming, new Map(local.map((a) => [a.id, a])))
 }
 
 export function planFiles(
