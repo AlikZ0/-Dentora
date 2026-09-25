@@ -161,6 +161,9 @@ function normaliseAppointment(
     status: STATUSES.has(a.status as AppointmentStatus) ? a.status! : 'scheduled',
     remindMinutesBefore: Number.isFinite(remind) && remind >= 0 ? remind : 60,
     notifiedAt: typeof a.notifiedAt === 'string' ? a.notifiedAt : undefined,
+    googleEventId:
+      typeof a.googleEventId === 'string' && a.googleEventId ? a.googleEventId : undefined,
+    googleSyncedAt: typeof a.googleSyncedAt === 'string' ? a.googleSyncedAt : undefined,
     createdAt,
     updatedAt: typeof a.updatedAt === 'string' ? a.updatedAt : createdAt,
     deleted: a.deleted === 1 ? 1 : 0,

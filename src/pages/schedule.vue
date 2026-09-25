@@ -6,6 +6,7 @@ import { clientRepository } from '~/database/repositories/clients'
 import { useToasts } from '~/composables/useToasts'
 import { useConfirm } from '~/composables/useConfirm'
 import { useAppStore } from '~/stores/app'
+import { useGoogleSync } from '~/composables/useGoogleSync'
 import { describeDay, dayKey, startOfLocalDay } from '~/utils/schedule'
 import { fullName } from '~/utils/format'
 import AppButton from '~/components/AppButton.vue'
@@ -19,6 +20,7 @@ useHead({ title: 'Визиты — Dentora' })
 const toasts = useToasts()
 const { confirm } = useConfirm()
 const app = useAppStore()
+const google = useGoogleSync()
 
 const appointments = ref<Appointment[]>([])
 const clients = ref<Map<string, Client>>(new Map())
@@ -80,14 +82,16 @@ async function save(draft: {
   saving.value = true
   try {
     if (editor.value.appointment) {
-      await appointmentRepository().update(editor.value.appointment.id, draft)
+      const { id } = await appointmentRepository().update(editor.value.appointment.id, draft)
+      void google.pushVisit(id)
       toasts.success('Визит обновлён')
     } else {
       if (!clientPicker.value) {
         toasts.errorText('Сначала выберите клиента.')
         return
       }
-      await appointmentRepository().create({ clientId: clientPicker.value, ...draft })
+      const created = await appointmentRepository().create({ clientId: clientPicker.value, ...draft })
+      void google.pushVisit(created.id)
       toasts.success('Визит запланирован')
     }
     editor.value = { open: false }
@@ -103,6 +107,7 @@ async function save(draft: {
 async function setStatus(appointment: Appointment, status: Appointment['status']): Promise<void> {
   try {
     await appointmentRepository().setStatus(appointment.id, status)
+    void google.pushVisit(appointment.id)
     await load()
     await app.refreshAgenda()
   } catch (error) {
@@ -120,6 +125,7 @@ async function remove(appointment: Appointment): Promise<void> {
   if (!ok) return
   try {
     await appointmentRepository().softDelete(appointment.id)
+    void google.pushVisit(appointment.id)
     toasts.success('Визит удалён')
     await load()
     await app.refreshAgenda()

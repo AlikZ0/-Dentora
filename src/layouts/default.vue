@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '~/stores/app'
+import { syncToGoogle } from '~/services/google/sync'
 import AppNav from '~/components/AppNav.vue'
 import ConfirmDialog from '~/components/ConfirmDialog.vue'
 import ToastHost from '~/components/ToastHost.vue'
@@ -9,6 +10,9 @@ const app = useAppStore()
 
 function syncOnline(): void {
   app.setOnline(navigator.onLine)
+  // Visits saved offline go to Google Calendar once the network is back.
+  // Without a live token this is a no-op; the user reconnects in Settings.
+  if (navigator.onLine) void syncToGoogle().catch(() => undefined)
 }
 
 onMounted(() => {

@@ -142,6 +142,20 @@ export function createAppointmentRepository(database: DentoraDatabase = db()) {
       await table().update(id, { notifiedAt: at })
     },
 
+    /**
+     * Records the Google Calendar copy. Like `markNotified`, it leaves
+     * `updatedAt` alone: mirroring a visit is not an edit of it.
+     */
+    async markGoogleSynced(id: Uuid, eventId: string | undefined, at: string = nowIso()): Promise<void> {
+      await table().update(id, { googleEventId: eventId, googleSyncedAt: at })
+    },
+
+    /** Visits whose Google copy is missing or older than the local record. */
+    async pendingGoogleSync(): Promise<Appointment[]> {
+      const rows = await table().toArray()
+      return rows.filter((a) => !a.googleSyncedAt || a.updatedAt > a.googleSyncedAt)
+    },
+
     async setStatus(id: Uuid, status: AppointmentStatus): Promise<Appointment> {
       const existing = await table().get(id)
       if (!existing) throw new Error(`appointment_not_found:${id.slice(0, 8)}`)
