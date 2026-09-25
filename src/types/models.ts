@@ -109,6 +109,13 @@ export interface Appointment {
   remindMinutesBefore: number
   /** Set once the reminder fired, so it is never shown twice. */
   notifiedAt?: IsoDateTime
+  /** Id of the mirrored event in the doctor's Google Calendar, once created. */
+  googleEventId?: string
+  /**
+   * When the Google copy last matched this record. A visit edited after this
+   * (`updatedAt > googleSyncedAt`) still has to be pushed.
+   */
+  googleSyncedAt?: IsoDateTime
   createdAt: IsoDateTime
   updatedAt: IsoDateTime
   deleted: DeletedFlag
@@ -141,6 +148,19 @@ export interface AppSettings {
   defaultRemindMinutesBefore: number
   /** Also show a summary of the day's visits when the app is first opened. */
   dailyAgenda: boolean
+  /** Mirror visits into the doctor's Google Calendar. */
+  googleCalendarSync: boolean
+  /** The doctor's Gmail; the calendar the visits go to. */
+  googleEmail: string
+  /**
+   * OAuth client id from Google Cloud Console. Empty means "use the one the
+   * build was configured with" (`NUXT_PUBLIC_GOOGLE_CLIENT_ID`).
+   */
+  googleClientId: string
+  /** Add an e-mail reminder next to the phone (push) reminder. */
+  googleEmailReminders: boolean
+  /** Invite the patient to the event when their e-mail is known. */
+  googleInvitePatient: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -150,6 +170,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appointmentNotifications: false,
   defaultRemindMinutesBefore: 60,
   dailyAgenda: true,
+  googleCalendarSync: false,
+  googleEmail: '',
+  googleClientId: '',
+  googleEmailReminders: true,
+  googleInvitePatient: false,
 }
 
 /** Lead times offered in the UI. */
