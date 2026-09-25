@@ -115,38 +115,85 @@ function loadIdentityServices(): Promise<GoogleOauth2> {
   return loader
 }
 
+interface Prepared {
+  key: string
+  client: TokenClient
+}
+
+let prepared: Prepared | null = null
+let pending: { resolve: (r: TokenResponse) => void; reject: (e: Error) => void } | null = null
+
+const preparedKey = (clientId: string, email: string) =>
+  `${clientId.trim()}|${email.trim().toLowerCase()}`
+
+function popupError(type?: string): GoogleCalendarError {
+  if (type === 'popup_closed') {
+    return new GoogleCalendarError('Окно входа Google было закрыто.', 'google_popup', type)
+  }
+  return new GoogleCalendarError(
+    'Браузер заблокировал окно входа Google. Разрешите всплывающие окна для этого сайта ' +
+      '(на iPhone: Настройки → Safari → «Блокировка всплывающих окон» выключить) и нажмите «Подключить» ещё раз.',
+    'google_popup',
+    type,
+  )
+}
+
 /**
- * Opens the Google consent window (or refreshes silently when consent was
- * already given). Must be called from a click: browsers block the popup
- * otherwise.
+ * Loads Google's script and builds the token client ahead of time.
+ *
+ * Safari (and every browser on iOS) only lets a click open a popup if the
+ * popup is opened synchronously inside that click. Loading a script or
+ * writing IndexedDB first uses the gesture up, and the sign-in window is
+ * silently blocked. So all the async work happens here, before the click.
  */
-export async function connect(clientId: string, email: string): Promise<string> {
+export async function prepareConnect(clientId: string, email: string): Promise<void> {
   if (!clientId.trim()) {
     throw new GoogleCalendarError('Укажите OAuth Client ID из Google Cloud Console.', 'google_no_client')
   }
+  const key = preparedKey(clientId, email)
+  if (prepared?.key === key) return
   const oauth2 = await loadIdentityServices()
-  const response = await new Promise<TokenResponse>((resolve, reject) => {
-    const client = oauth2.initTokenClient({
-      client_id: clientId.trim(),
-      scope: SCOPES,
-      login_hint: email.trim(),
-      callback: resolve,
-      error_callback: (error) =>
-        reject(
-          new GoogleCalendarError(
-            error.type === 'popup_closed'
-              ? 'Окно входа Google было закрыто.'
-              : 'Браузер заблокировал окно входа Google. Нажмите «Подключить» ещё раз.',
-            'google_popup',
-            error.type,
-          ),
-        ),
-    })
-    // An empty prompt shows consent only the first time; afterwards Google
-    // hands the token back with a popup that closes by itself.
-    client.requestAccessToken({ prompt: '' })
+  const client = oauth2.initTokenClient({
+    client_id: clientId.trim(),
+    scope: SCOPES,
+    login_hint: email.trim(),
+    callback: (response) => {
+      pending?.resolve(response)
+      pending = null
+    },
+    error_callback: (error) => {
+      pending?.reject(popupError(error.type))
+      pending = null
+    },
   })
+  prepared = { key, client }
+}
 
+export function isConnectPrepared(clientId: string, email: string): boolean {
+  return prepared?.key === preparedKey(clientId, email)
+}
+
+/**
+ * Opens the Google sign-in window. Call it straight from the click handler,
+ * with nothing awaited before it, after `prepareConnect` has finished.
+ */
+export function connect(clientId: string, email: string): Promise<string> {
+  if (!prepared || prepared.key !== preparedKey(clientId, email)) {
+    return Promise.reject(
+      new GoogleCalendarError('Вход Google ещё загружается. Подождите секунду и нажмите снова.', 'google_not_ready'),
+    )
+  }
+  pending?.reject(popupError('popup_closed'))
+  const response = new Promise<TokenResponse>((resolve, reject) => {
+    pending = { resolve, reject }
+  })
+  // An empty prompt shows consent only the first time; afterwards Google
+  // hands the token back with a popup that closes by itself.
+  prepared.client.requestAccessToken({ prompt: '' })
+  return response.then((r) => finishConnect(r, email))
+}
+
+async function finishConnect(response: TokenResponse, email: string): Promise<string> {
   if (!response.access_token) {
     throw new GoogleCalendarError(
       'Google не выдал доступ к календарю.',
@@ -158,7 +205,7 @@ export async function connect(clientId: string, email: string): Promise<string> 
   if (actual && actual.toLowerCase() !== email.trim().toLowerCase()) {
     window.google?.accounts?.oauth2?.revoke(response.access_token)
     throw new GoogleCalendarError(
-      `Вход выполнен в ${actual}, а в настройках указан ${email.trim()}. Выберите нужный аккаунт Google.`,
+      `Вход выполнен в ${actual}, а в настройках указан ${email.trim()}. Исправьте адрес в поле «Gmail врача» или войдите в нужный аккаунт.`,
       'google_wrong_account',
     )
   }

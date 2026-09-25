@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '~/stores/app'
 import { useToasts } from '~/composables/useToasts'
-import { connect, disconnect, isConnected } from '~/services/google/calendar'
+import {
+  connect,
+  disconnect,
+  isConnected,
+  isConnectPrepared,
+  prepareConnect,
+} from '~/services/google/calendar'
 import { isValidEmail } from '~/services/google/events'
 import { pendingGoogleCount, syncToGoogle } from '~/services/google/sync'
 import AppButton from '~/components/AppButton.vue'
@@ -20,6 +26,9 @@ const connected = ref(false)
 const connecting = ref(false)
 const syncing = ref(false)
 const pending = ref(0)
+/** Google's sign-in script is loaded for the current Gmail + client id. */
+const ready = ref(false)
+const preparing = ref(false)
 
 const GOOGLE_LINKS = {
   credentials: 'https://console.cloud.google.com/apis/credentials',
@@ -44,23 +53,50 @@ async function refreshPending(): Promise<void> {
   pending.value = await pendingGoogleCount()
 }
 
-async function saveAccount(): Promise<boolean> {
+/**
+ * Everything asynchronous that the sign-in needs is done here, as soon as the
+ * fields are filled in - not in the click. On iPhone a popup opened after any
+ * `await` inside the click is blocked.
+ */
+async function prepare(): Promise<void> {
+  ready.value = false
+  if (!isValidEmail(email.value) || !effectiveClientId.value || !app.online) return
+  const mail = email.value
+  const id = effectiveClientId.value
+  preparing.value = true
+  try {
+    await prepareConnect(id, mail)
+    ready.value = isConnectPrepared(effectiveClientId.value, email.value)
+  } catch (error) {
+    toasts.error(error, 'google.prepare')
+  } finally {
+    preparing.value = false
+  }
+}
+
+let prepareTimer: ReturnType<typeof setTimeout> | undefined
+watch([email, clientId, () => app.online], () => {
+  ready.value = isConnectPrepared(effectiveClientId.value, email.value)
+  clearTimeout(prepareTimer)
+  prepareTimer = setTimeout(prepare, 400)
+})
+
+/** No `await` before `connect()`: the popup has to open inside the tap. */
+async function connectGoogle(): Promise<void> {
   if (!isValidEmail(email.value)) {
     toasts.errorText('Введите Gmail врача.')
-    return false
+    return
   }
   const nextEmail = email.value.trim()
   if (nextEmail.toLowerCase() !== app.settings.googleEmail.toLowerCase()) disconnect()
-  await app.saveSettings({ googleEmail: nextEmail, googleClientId: clientId.value.trim() })
-  return true
-}
 
-/** Straight from the click: the Google popup is blocked otherwise. */
-async function connectGoogle(): Promise<void> {
   connecting.value = true
+  const signIn = connect(effectiveClientId.value, nextEmail)
+  // Awaited below; this only stops an early save failure leaving it unhandled.
+  signIn.catch(() => undefined)
   try {
-    if (!(await saveAccount())) return
-    await connect(effectiveClientId.value, app.settings.googleEmail)
+    await app.saveSettings({ googleEmail: nextEmail, googleClientId: clientId.value.trim() })
+    await signIn
     await app.saveSettings({ googleCalendarSync: true })
     refreshState()
     toasts.success('Google Календарь подключён')
@@ -115,6 +151,7 @@ onMounted(async () => {
   email.value = app.settings.googleEmail
   clientId.value = app.settings.googleClientId
   refreshState()
+  void prepare()
   await refreshPending()
 })
 </script>
@@ -135,7 +172,7 @@ onMounted(async () => {
         <AppField
           label="Gmail врача"
           input-id="googleEmail"
-          hint="В календарь этого аккаунта будут добавляться визиты"
+          hint="Адрес Google-аккаунта (обычно …@gmail.com). В его календарь будут добавляться визиты"
           :error="emailError"
           required
         >
@@ -218,8 +255,8 @@ onMounted(async () => {
         <AppButton
           variant="primary"
           block
-          :loading="connecting"
-          :disabled="!app.online || !effectiveClientId"
+          :loading="connecting || preparing"
+          :disabled="!app.online || !effectiveClientId || !ready"
           @click="connectGoogle"
         >
           {{ connected ? 'Переподключить' : 'Подключить Google' }}
