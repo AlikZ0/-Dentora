@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore } from '~/stores/app'
-import { syncToGoogle } from '~/services/google/sync'
+import { googleSyncConfigured, syncToGoogle } from '~/services/google/sync'
+import { prepareConnect } from '~/services/google/calendar'
 import AppNav from '~/components/AppNav.vue'
 import ConfirmDialog from '~/components/ConfirmDialog.vue'
 import ToastHost from '~/components/ToastHost.vue'
 
 const app = useAppStore()
+const config = useRuntimeConfig()
 
 function syncOnline(): void {
   app.setOnline(navigator.onLine)
@@ -14,6 +16,19 @@ function syncOnline(): void {
   // Without a live token this is a no-op; the user reconnects in Settings.
   if (navigator.onLine) void syncToGoogle().catch(() => undefined)
 }
+
+// Load Google's sign-in script early, so an expired token can be renewed
+// without waiting for a script inside the Save tap.
+watch(
+  () => app.ready,
+  (ready) => {
+    const clientId = app.settings.googleClientId || String(config.public.googleClientId || '')
+    if (ready && googleSyncConfigured(app.settings) && clientId && navigator.onLine) {
+      void prepareConnect(clientId, app.settings.googleEmail).catch(() => undefined)
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   syncOnline()
