@@ -24,6 +24,9 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       appVersion: APP_VERSION,
+      // OAuth client id for the optional Google Calendar sync. Can also be
+      // entered by the user in Settings > Google Календарь.
+      googleClientId: process.env.NUXT_PUBLIC_GOOGLE_CLIENT_ID || '',
     },
   },
 

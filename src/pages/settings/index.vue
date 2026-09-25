@@ -116,6 +116,20 @@ onMounted(async () => {
         <span class="chevron" aria-hidden="true">&rsaquo;</span>
       </NuxtLink>
 
+      <NuxtLink to="/settings/google" class="link-row">
+        <span>
+          <span class="strong">Google Календарь</span>
+          <span class="tiny muted">
+            {{
+              app.settings.googleCalendarSync && app.settings.googleEmail
+                ? `Визиты добавляются в ${app.settings.googleEmail}`
+                : 'Визиты в календаре врача и напоминания на телефон'
+            }}
+          </span>
+        </span>
+        <span class="chevron" aria-hidden="true">&rsaquo;</span>
+      </NuxtLink>
+
       <NuxtLink to="/settings/trash" class="link-row">
         <span>
           <span class="strong">Корзина</span>
@@ -261,7 +275,10 @@ onMounted(async () => {
       <p class="card-title">Приватность</p>
       <ul class="privacy">
         <li>Все данные хранятся только в этом браузере, в IndexedDB.</li>
-        <li>Приложение не отправляет данные на серверы и не использует аналитику.</li>
+        <li>
+          Приложение не отправляет данные на серверы и не использует аналитику. Исключение —
+          Google Календарь, если вы сами его подключили: туда уходят визиты.
+        </li>
         <li>Файлы не публикуются по внешним ссылкам.</li>
         <li>Единственный способ передать данные — backup-файл, который вы создаёте сами.</li>
       </ul>

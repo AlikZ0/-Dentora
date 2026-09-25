@@ -8,6 +8,7 @@ import { appointmentRepository } from '~/database/repositories/appointments'
 import { useToasts } from '~/composables/useToasts'
 import { useConfirm } from '~/composables/useConfirm'
 import { useAppStore } from '~/stores/app'
+import { useGoogleSync } from '~/composables/useGoogleSync'
 import { ACCEPT_ATTRIBUTE, attachFiles, KIND_LABELS } from '~/services/files/attachments'
 import { formatDate, formatDateLong } from '~/utils/datetime'
 import { formatBytes, fullName } from '~/utils/format'
@@ -27,6 +28,7 @@ const route = useRoute()
 const toasts = useToasts()
 const { confirm } = useConfirm()
 const app = useAppStore()
+const google = useGoogleSync()
 
 const clientId = computed(() => String(route.params.id))
 const client = ref<Client | null>(null)
@@ -175,10 +177,12 @@ async function saveVisit(draft: {
   savingVisit.value = true
   try {
     if (visitModal.value.appointment) {
-      await appointmentRepository().update(visitModal.value.appointment.id, draft)
+      const { id } = await appointmentRepository().update(visitModal.value.appointment.id, draft)
+      void google.pushVisit(id)
       toasts.success('Визит обновлён')
     } else {
-      await appointmentRepository().create({ clientId: clientId.value, ...draft })
+      const created = await appointmentRepository().create({ clientId: clientId.value, ...draft })
+      void google.pushVisit(created.id)
       toasts.success('Визит запланирован')
     }
     visitModal.value = { open: false }
@@ -195,6 +199,7 @@ async function saveVisit(draft: {
 async function setVisitStatus(visit: Appointment, status: Appointment['status']): Promise<void> {
   try {
     await appointmentRepository().setStatus(visit.id, status)
+    void google.pushVisit(visit.id)
     await load()
     await app.refreshAgenda()
   } catch (error) {
@@ -212,6 +217,7 @@ async function deleteVisit(visit: Appointment): Promise<void> {
   if (!ok) return
   try {
     await appointmentRepository().softDelete(visit.id)
+    void google.pushVisit(visit.id)
     toasts.success('Визит удалён')
     await load()
     await app.refreshCounts()
