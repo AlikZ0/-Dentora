@@ -294,11 +294,14 @@ Google Календарь: создание, перенос, смена стат
 
 ### Настройка (один раз)
 
+Ссылки на эти страницы есть прямо в приложении, на странице
+«Google Календарь».
+
 1. [Google Cloud Console](https://console.cloud.google.com/) → создайте проект.
-2. **APIs & Services → Library** → включите **Google Calendar API**.
-3. **OAuth consent screen** → тип *External*, добавьте Gmail врача в *Test users*
+2. Включите [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com).
+3. [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) → тип *External*, добавьте Gmail врача в *Test users*
    (или опубликуйте приложение).
-4. **Credentials → Create credentials → OAuth client ID**, тип
+4. [Credentials](https://console.cloud.google.com/apis/credentials) → **Create credentials → OAuth client ID**, тип
    *Web application*. В *Authorized JavaScript origins* укажите адрес, с
    которого открывается Dentora (например `https://example.github.io`,
    для разработки — `http://localhost:3000`).
