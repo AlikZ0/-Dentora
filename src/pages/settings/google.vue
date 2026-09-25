@@ -21,6 +21,15 @@ const connecting = ref(false)
 const syncing = ref(false)
 const pending = ref(0)
 
+const GOOGLE_LINKS = {
+  credentials: 'https://console.cloud.google.com/apis/credentials',
+  consent: 'https://console.cloud.google.com/apis/credentials/consent',
+  calendarApi: 'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+} as const
+
+/** What the doctor has to paste into «Authorized JavaScript origins». */
+const origin = ref('')
+
 const builtInClientId = computed(() => String(config.public.googleClientId || ''))
 const effectiveClientId = computed(() => clientId.value.trim() || builtInClientId.value)
 const emailError = computed(() =>
@@ -102,6 +111,7 @@ function disconnectGoogle(): void {
 
 onMounted(async () => {
   await app.init()
+  origin.value = window.location.origin
   email.value = app.settings.googleEmail
   clientId.value = app.settings.googleClientId
   refreshState()
@@ -145,7 +155,7 @@ onMounted(async () => {
           :hint="
             builtInClientId
               ? 'Можно оставить пустым — используется ключ, встроенный в приложение'
-              : 'Из Google Cloud Console → APIs & Services → Credentials (тип «Web application»)'
+              : 'Тип «Web application». Как получить — см. ссылки ниже'
           "
         >
           <input
@@ -157,6 +167,41 @@ onMounted(async () => {
             placeholder="1234567890-abc.apps.googleusercontent.com"
           />
         </AppField>
+
+        <div class="oauth-help">
+          <p class="small strong">Где взять OAuth Client ID</p>
+          <ol class="oauth-steps small">
+            <li>
+              Включите
+              <a :href="GOOGLE_LINKS.calendarApi" target="_blank" rel="noopener noreferrer">
+                Google Calendar API
+              </a>
+            </li>
+            <li>
+              Настройте
+              <a :href="GOOGLE_LINKS.consent" target="_blank" rel="noopener noreferrer">
+                экран согласия OAuth
+              </a>
+              и добавьте свой Gmail в «Test users»
+            </li>
+            <li>
+              Создайте
+              <a :href="GOOGLE_LINKS.credentials" target="_blank" rel="noopener noreferrer">
+                OAuth Client ID
+              </a>
+              типа «Web application», в «Authorized JavaScript origins» укажите
+              <code>{{ origin }}</code>
+            </li>
+          </ol>
+          <a
+            class="oauth-open"
+            :href="GOOGLE_LINKS.credentials"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Открыть Google Cloud Console ↗
+          </a>
+        </div>
       </div>
 
       <p v-if="connected" class="status status-ok">
@@ -276,6 +321,32 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.oauth-help {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--c-surface-2);
+}
+
+.oauth-steps {
+  margin: 6px 0 10px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--c-text-muted);
+}
+
+.oauth-steps code {
+  overflow-wrap: anywhere;
+}
+
+.oauth-open {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch);
+  font-weight: 600;
 }
 
 .actions {
