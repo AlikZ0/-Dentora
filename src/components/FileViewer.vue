@@ -87,6 +87,14 @@ function onKeydown(event: KeyboardEvent): void {
   else if (event.key === '0') reset()
 }
 
+function removeCurrent(): void {
+  const file = current.value
+  if (!file) return
+
+  emit('remove', file)
+  emit('close')
+}
+
 async function toggleFullscreen(): Promise<void> {
   const element = stage.value?.closest('.viewer') as HTMLElement | null
   if (!element) return
@@ -207,7 +215,7 @@ const supportsFullscreen = computed(
         </button>
         <span class="spacer" />
         <button class="icon-btn" aria-label="Сохранить" @click="download">&#8681;</button>
-        <button class="icon-btn danger" aria-label="Удалить" @click="emit('remove', current)">
+        <button class="icon-btn danger" aria-label="Удалить" @click="removeCurrent">
           &#128465;
         </button>
       </footer>
